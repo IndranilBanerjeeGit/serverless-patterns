@@ -1,0 +1,736 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+  ActiveMQEngineVersion:
+    Type: String
+    Default: 5.18
+    Description: ActiveMQ engine version
+  PythonVersion:
+    Type: String
+    Description: Choose the version of Python. Lambda currently supports Python 3.9, 3.10, 3.11, and 3.12
+    AllowedValues:
+      - python3.9
+      - python3.10
+      - python3.11
+      - python3.12
+    Default: python3.12
+  ActiveMQBrokerName:
+    Type: String
+    Default: ActiveMQPythonLambdaBroker
+    Description: ActiveMQ broker name for Lambda function
+  ActiveMQQueueName:
+    Type: String
+    Default: ActiveMQPythonLambdaQueue
+    Description: ActiveMQ queue name for Lambda function
+  ActiveMQBrokerAdminUser:
+    Type: String
+    Description: Username for the ActiveMQ Broker
+    Default: activemqadmin
+  ActiveMQBrokerPassword:
+    Type: String
+    Description: Password for the ActiveMQ Broker
+    Default: activemqPassword123
+    NoEcho: true
+  ServerlessLandGithubLocation:
+    Type: String
+    Default: https://github.com/aws-samples/serverless-patterns.git
+    Description: Github location of the code. Make sure to leave the .git at the end even if you are using a fork
+
+Mappings:
+  SubnetConfig:
+      VPC:
+        CIDR: '10.1.0.0/16'
+      PublicOne:
+        CIDR: '10.1.0.0/24'
+      PublicTwo:
+        CIDR: '10.1.1.0/24'
+      PublicThree:
+        CIDR: '10.1.2.0/24'
+      PrivateSubnetActiveMQOne:
+        CIDR: '10.1.10.0/24'
+      PrivateSubnetActiveMQTwo:
+        CIDR: '10.1.11.0/24'
+      PrivateSubnetActiveMQThree:
+        CIDR: '10.1.12.0/24'
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: !FindInMap ['SubnetConfig', 'VPC', 'CIDR']
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-VPC
+
+  PublicSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 0
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap ['SubnetConfig', 'PublicOne', 'CIDR']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PublicSubnetOne
+
+  PublicSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 1
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap ['SubnetConfig', 'PublicTwo', 'CIDR']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PublicSubnetTwo
+
+  PublicSubnetThree:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 2
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap ['SubnetConfig', 'PublicThree', 'CIDR']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PublicSubnetThree
+
+  PrivateSubnetActiveMQOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 0
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap ['SubnetConfig', 'PrivateSubnetActiveMQOne', 'CIDR']
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateSubnetActiveMQOne
+
+  PrivateSubnetActiveMQTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 1
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap ['SubnetConfig', 'PrivateSubnetActiveMQTwo', 'CIDR']
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateSubnetActiveMQTwo
+
+  PrivateSubnetActiveMQThree:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 2
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap ['SubnetConfig', 'PrivateSubnetActiveMQThree', 'CIDR']
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateSubnetActiveMQThree
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-InternetGateway
+
+  GatewayAttachement:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref 'VPC'
+      InternetGatewayId: !Ref 'InternetGateway'
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PublicRouteTable
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachement
+    Properties:
+      RouteTableId: !Ref 'PublicRouteTable'
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref 'InternetGateway'
+
+  PublicSubnetOneRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetOne
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetTwoRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetTwo
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetThreeRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetThree
+      RouteTableId: !Ref PublicRouteTable
+
+  NatGatewayOneAttachment:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachement
+    Properties:
+        Domain: vpc
+
+  NatGatewayTwoAttachment:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachement
+    Properties:
+        Domain: vpc
+
+  NatGatewayThreeAttachment:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachement
+    Properties:
+        Domain: vpc
+
+  NatGatewayOne:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayOneAttachment.AllocationId
+      SubnetId: !Ref PublicSubnetOne
+
+  NatGatewayTwo:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayTwoAttachment.AllocationId
+      SubnetId: !Ref PublicSubnetTwo
+
+  NatGatewayThree:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayThreeAttachment.AllocationId
+      SubnetId: !Ref PublicSubnetThree
+
+  PrivateRouteTableOne:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateRouteTableOne
+
+  PrivateRouteOne:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableOne
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayOne
+
+  PrivateRouteTableOneAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableOne
+      SubnetId: !Ref PrivateSubnetActiveMQOne
+
+  PrivateRouteTableTwo:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateRouteTableTwo
+
+  PrivateRouteTwo:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableTwo
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayTwo
+
+  PrivateRouteTableTwoAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableTwo
+      SubnetId: !Ref PrivateSubnetActiveMQTwo
+
+  PrivateRouteTableThree:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateRouteTableThree
+
+  PrivateRouteThree:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableThree
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayThree
+
+  PrivateRouteTableThreeAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableThree
+      SubnetId: !Ref PrivateSubnetActiveMQThree
+
+  ActiveMQSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ActiveMQ broker
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 61617
+          ToPort: 61617
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+        - IpProtocol: tcp
+          FromPort: 8162
+          ToPort: 8162
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-ActiveMQSecurityGroup
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EC2 instance
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-EC2SecurityGroup
+
+  ActiveMQSubnetGroup:
+    Type: AWS::MQ::ConfigurationAssociation
+    Properties:
+      Broker: !Ref ActiveMQBroker
+      Configuration:
+        Id: !Ref ActiveMQConfiguration
+        Revision: !GetAtt ActiveMQConfiguration.Revision
+
+  ActiveMQConfiguration:
+    Type: AWS::MQ::Configuration
+    Properties:
+      Name: !Sub ${AWS::StackName}-ActiveMQConfiguration
+      Description: ActiveMQ Configuration for Python Lambda
+      EngineType: ACTIVEMQ
+      EngineVersion: !Ref ActiveMQEngineVersion
+      Data: |
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <broker xmlns="http://activemq.apache.org/schema/core">
+          <destinationPolicy>
+            <policyMap>
+              <policyEntries>
+                <policyEntry topic=">" >
+                  <pendingMessageLimitStrategy>
+                    <constantPendingMessageLimitStrategy limit="1000"/>
+                  </pendingMessageLimitStrategy>
+                </policyEntry>
+              </policyEntries>
+            </policyMap>
+          </destinationPolicy>
+          <systemUsage>
+            <systemUsage>
+              <memoryUsage>
+                <memoryUsage percentOfJvmHeap="70" />
+              </memoryUsage>
+              <storeUsage>
+                <storeUsage limit="100 gb"/>
+              </storeUsage>
+              <tempUsage>
+                <tempUsage limit="50 gb"/>
+              </tempUsage>
+            </systemUsage>
+          </systemUsage>
+        </broker>
+
+  ActiveMQBroker:
+    Type: AWS::MQ::Broker
+    Properties:
+      BrokerName: !Ref ActiveMQBrokerName
+      DeploymentMode: ACTIVE_STANDBY_MULTI_AZ
+      EngineType: ACTIVEMQ
+      EngineVersion: !Ref ActiveMQEngineVersion
+      HostInstanceType: mq.t3.micro
+      PubliclyAccessible: false
+      SecurityGroups:
+        - !Ref ActiveMQSecurityGroup
+      SubnetIds:
+        - !Ref PrivateSubnetActiveMQOne
+        - !Ref PrivateSubnetActiveMQTwo
+      Users:
+        - Username: !Ref ActiveMQBrokerAdminUser
+          Password: !Ref ActiveMQBrokerPassword
+      Configuration:
+        Id: !Ref ActiveMQConfiguration
+        Revision: !GetAtt ActiveMQConfiguration.Revision
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-ActiveMQBroker
+
+  ActiveMQSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AWS::StackName}-ActiveMQSecret
+      Description: ActiveMQ broker credentials
+      SecretString: !Sub |
+        {
+          "username": "${ActiveMQBrokerAdminUser}",
+          "password": "${ActiveMQBrokerPassword}"
+        }
+
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: SAMDeployPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:*
+                  - iam:*
+                  - lambda:*
+                  - s3:*
+                  - dynamodb:*
+                  - mq:*
+                  - secretsmanager:*
+                  - logs:*
+                Resource: '*'
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2Role
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t3.medium
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      SubnetId: !Ref PublicSubnetOne
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 50
+            VolumeType: gp2
+            DeleteOnTermination: true    
+      UserData:
+        Fn::Base64:
+          !Sub
+          - |
+            #!/bin/bash
+            yum update -y
+            
+            # install Python 3.12
+            max_attempts=5
+            attempt_num=1
+            success=false
+            while [ $success = false ] && [ $attempt_num -le $max_attempts ]; do
+                echo "Trying yum install Python"
+                yum update -y
+            
+                # install Python
+                PYTHON_VERSION=${python_version}
+                echo "export PYTHON_VERSION=$PYTHON_VERSION" >> /home/ec2-user/.bash_profile
+                yum install python3 python3-pip -y
+                
+                # Check the exit code of the command
+                if [ $? -eq 0 ]; then
+                    echo "Yum install of Python succeeded"
+                    success=true
+                else
+                    echo "Attempt $attempt_num failed. Sleeping for 3 seconds and trying again..."
+                    sleep 3
+                    ((attempt_num++))
+                fi
+            done
+            
+            max_attempts=5
+            attempt_num=1
+            success=false
+            while [ $success = false ] && [ $attempt_num -le $max_attempts ]; do
+                echo "Trying yum install"
+                yum install nmap-ncat -y
+                # Check the exit code of the command
+                if [ $? -eq 0 ]; then
+                    echo "Yum install of nmap succeeded"
+                    success=true
+                else
+                    echo "Attempt $attempt_num failed. Sleeping for 3 seconds and trying again..."
+                    sleep 3
+                    ((attempt_num++))
+                fi
+            done
+            
+            max_attempts=5
+            attempt_num=1
+            success=false
+            while [ $success = false ] && [ $attempt_num -le $max_attempts ]; do
+                echo "Trying yum install"
+                yum install git -y
+                # Check the exit code of the command
+                if [ $? -eq 0 ]; then
+                    echo "Yum install of git succeeded"
+                    success=true
+                else
+                    echo "Attempt $attempt_num failed. Sleeping for 3 seconds and trying again..."
+                    sleep 3
+                    ((attempt_num++))
+                fi
+            done
+            
+            max_attempts=5
+            attempt_num=1
+            success=false
+            while [ $success = false ] && [ $attempt_num -le $max_attempts ]; do
+                echo "Trying yum install"
+                yum erase awscli -y
+                # Check the exit code of the command
+                if [ $? -eq 0 ]; then
+                    echo "Yum erase of awscli succeeded"
+                    success=true
+                else
+                    echo "Attempt $attempt_num failed. Sleeping for 3 seconds and trying again..."
+                    sleep 3
+                    ((attempt_num++))
+                fi
+            done
+            
+            max_attempts=5
+            attempt_num=1
+            success=false
+            while [ $success = false ] && [ $attempt_num -le $max_attempts ]; do
+                echo "Trying yum install"
+                yum install jq -y
+                # Check the exit code of the command
+                if [ $? -eq 0 ]; then
+                    echo "Yum install of jq succeeded"
+                    success=true
+                else
+                    echo "Attempt $attempt_num failed. Sleeping for 3 seconds and trying again..."
+                    sleep 3
+                    ((attempt_num++))
+                fi
+            done
+            
+            # Install AWS CLI v2
+            max_attempts=5
+            attempt_num=1
+            success=false
+            while [ $success = false ] && [ $attempt_num -le $max_attempts ]; do
+                echo "Trying to install AWS CLI v2"
+                cd /tmp
+                curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                unzip awscliv2.zip
+                sudo ./aws/install
+                # Check the exit code of the command
+                if [ $? -eq 0 ]; then
+                    echo "AWS CLI v2 install succeeded"
+                    success=true
+                else
+                    echo "Attempt $attempt_num failed. Sleeping for 3 seconds and trying again..."
+                    sleep 3
+                    ((attempt_num++))
+                fi
+            done
+            
+            # Install SAM CLI
+            max_attempts=5
+            attempt_num=1
+            success=false
+            while [ $success = false ] && [ $attempt_num -le $max_attempts ]; do
+                echo "Trying to install SAM CLI"
+                cd /tmp
+                wget https://github.com/aws/aws-sam-cli/releases/latest/download/aws-sam-cli-linux-x86_64.zip
+                unzip aws-sam-cli-linux-x86_64.zip -d sam-installation
+                sudo ./sam-installation/install
+                # Check the exit code of the command
+                if [ $? -eq 0 ]; then
+                    echo "SAM CLI install succeeded"
+                    success=true
+                else
+                    echo "Attempt $attempt_num failed. Sleeping for 3 seconds and trying again..."
+                    sleep 3
+                    ((attempt_num++))
+                fi
+            done
+            
+            # Install ActiveMQ CLI tools
+            max_attempts=5
+            attempt_num=1
+            success=false
+            while [ $success = false ] && [ $attempt_num -le $max_attempts ]; do
+                echo "Trying to install ActiveMQ CLI"
+                cd /home/ec2-user
+                wget https://archive.apache.org/dist/activemq/5.18.3/apache-activemq-5.18.3-bin.tar.gz
+                tar -xzf apache-activemq-5.18.3-bin.tar.gz
+                chown -R ec2-user:ec2-user apache-activemq-5.18.3
+                echo "export PATH=\$PATH:/home/ec2-user/apache-activemq-5.18.3/bin" >> /home/ec2-user/.bash_profile
+                # Check the exit code of the command
+                if [ $? -eq 0 ]; then
+                    echo "ActiveMQ CLI install succeeded"
+                    success=true
+                else
+                    echo "Attempt $attempt_num failed. Sleeping for 3 seconds and trying again..."
+                    sleep 3
+                    ((attempt_num++))
+                fi
+            done
+            
+            # Clone the serverless patterns repository
+            cd /home/ec2-user
+            git clone ${serverless_github_location} -b pythonlambdas
+            chown -R ec2-user:ec2-user serverless-patterns
+            
+            # Set up sparse checkout for Python pattern
+            cd serverless-patterns
+            git config core.sparseCheckout true
+            echo "activemq-private-lambda-python-sam/*" > .git/info/sparse-checkout
+            git read-tree -m -u HEAD
+            
+            cd activemq-private-lambda-python-sam
+            
+            # Update template with actual values
+            cd /home/ec2-user/serverless-patterns/activemq-private-lambda-python-sam/activemq_consumer_dynamo_sam_python
+            sed -i "s/ACTIVEMQ_BROKER_ARN/${activemq_broker_arn}/g" template.yaml
+            sed -i "s/ACTIVEMQ_QUEUE_NAME/${activemq_queue_name}/g" template.yaml
+            sed -i "s/ACTIVEMQ_SECRET_ARN/${activemq_secret_arn}/g" template.yaml
+            sed -i "s/ACTIVEMQ_SUBNET_ONE/${activemq_subnet_one}/g" template.yaml
+            sed -i "s/ACTIVEMQ_SUBNET_TWO/${activemq_subnet_two}/g" template.yaml
+            sed -i "s/ACTIVEMQ_SUBNET_THREE/${activemq_subnet_three}/g" template.yaml
+            sed -i "s/SECURITY_GROUP/${security_group}/g" template.yaml
+            
+            # Update message sender with actual values
+            cd /home/ec2-user/serverless-patterns/activemq-private-lambda-python-sam/activemq_message_sender_python
+            sed -i "s/ACTIVEMQ_BROKER_ENDPOINT/${activemq_broker_endpoint}/g" commands.sh
+            sed -i "s/ACTIVEMQ_QUEUE_NAME/${activemq_queue_name}/g" commands.sh
+            
+            # Install Python dependencies for message sender
+            pip3 install -r requirements.txt
+            
+            # Make scripts executable
+            chmod +x commands.sh
+            chmod +x setup.sh
+            
+            # Set ownership
+            cd /home/ec2-user/serverless-patterns/activemq-private-lambda-python-sam
+            chown -R ec2-user:ec2-user .
+            
+          - python_version: !Ref PythonVersion
+            serverless_github_location: !Ref ServerlessLandGithubLocation
+            activemq_broker_arn: !Ref ActiveMQBroker
+            activemq_queue_name: !Ref ActiveMQQueueName
+            activemq_secret_arn: !Ref ActiveMQSecret
+            activemq_subnet_one: !Ref PrivateSubnetActiveMQOne
+            activemq_subnet_two: !Ref PrivateSubnetActiveMQTwo
+            activemq_subnet_three: !Ref PrivateSubnetActiveMQThree
+            security_group: !Ref EC2SecurityGroup
+            activemq_broker_endpoint: !Sub
+              - "ssl://${BrokerEndpoint}:61617"
+              - BrokerEndpoint: !Select [0, !GetAtt ActiveMQBroker.OpenWireEndpoints]
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-EC2Instance
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub ${AWS::StackName}-VPC-ID
+
+  PrivateSubnetActiveMQOne:
+    Description: Private subnet one for ActiveMQ
+    Value: !Ref PrivateSubnetActiveMQOne
+    Export:
+      Name: !Sub ${AWS::StackName}-PrivateSubnetActiveMQOne
+
+  PrivateSubnetActiveMQTwo:
+    Description: Private subnet two for ActiveMQ
+    Value: !Ref PrivateSubnetActiveMQTwo
+    Export:
+      Name: !Sub ${AWS::StackName}-PrivateSubnetActiveMQTwo
+
+  PrivateSubnetActiveMQThree:
+    Description: Private subnet three for ActiveMQ
+    Value: !Ref PrivateSubnetActiveMQThree
+    Export:
+      Name: !Sub ${AWS::StackName}-PrivateSubnetActiveMQThree
+
+  ActiveMQBrokerArn:
+    Description: ActiveMQ Broker ARN
+    Value: !Ref ActiveMQBroker
+    Export:
+      Name: !Sub ${AWS::StackName}-ActiveMQBrokerArn
+
+  ActiveMQBrokerEndpoint:
+    Description: ActiveMQ Broker Endpoint
+    Value: !Select [0, !GetAtt ActiveMQBroker.OpenWireEndpoints]
+    Export:
+      Name: !Sub ${AWS::StackName}-ActiveMQBrokerEndpoint
+
+  ActiveMQSecretArn:
+    Description: ActiveMQ Secret ARN
+    Value: !Ref ActiveMQSecret
+    Export:
+      Name: !Sub ${AWS::StackName}-ActiveMQSecretArn
+
+  EC2SecurityGroupId:
+    Description: EC2 Security Group ID
+    Value: !Ref EC2SecurityGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-EC2SecurityGroupId
+
+  ActiveMQBrokerNameForPythonLambda:
+    Description: The Broker name to use for the Python Lambda Function
+    Value: !Ref ActiveMQBrokerName
+
+  ActiveMQQueueNameForPythonLambda:
+    Description: The Queue name to use for the Python Lambda Function
+    Value: !Ref ActiveMQQueueName
+
+  EC2InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref EC2Instance
+    Export:
+      Name: !Sub ${AWS::StackName}-EC2InstanceId
