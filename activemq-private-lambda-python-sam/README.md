@@ -4,10 +4,10 @@ This pattern is an example of a Lambda function written in Python that consumes 
 
 This project contains source code and supporting files for a serverless application that you can deploy with the SAM CLI. It includes the following files and folders.
 
-- activemq_consumer_dynamo_sam/activemq_event_consumer_function/app.py - Code for the application's Lambda function that will listen for Amazon MQ (Apache ActiveMQ) messages and write them to an Amazon DynamoDB table
+- activemq_consumer_dynamo_sam/activemq_event_consumer_function/app.py - Code for the application's Lambda function
 - activemq_message_sender_json/activemq_producer.py - Code for publishing messages with JSON payload into an Amazon MQ (ActiveMQ cluster)
-- activemq_consumer_dynamo_sam/template_original.yaml - A template that defines the application's Lambda function to be used by SAM to deploy the lambda function
-- ActiveMQAndClientEC2.yaml - An AWS CloudFormation template file that can be used to deploy an Amazon MQ (Apache ActiveMQ) cluster and also deploy an EC2 instance with all pre-requisities already installed, so you can directly build and deploy the lambda function and test it out.
+- activemq_consumer_dynamo_sam/template_original.yaml - A template that defines the SAM configuration to build and deploy the lambda function
+- ActiveMQAndClientEC2.yaml - An AWS CloudFormation template file that can be used to deploy an Amazon MQ (Apache ActiveMQ) cluster and also an EC2 instance.
 - activemq_queue_browser.sh - A shell script that can be used to connect to the Amazon MQ (Apache ActiveMQ) brokers using the activemq command-line tool
 
 Important: this application uses various AWS services and there are costs associated with these services after the Free Tier usage - please see the [AWS Pricing page](https://aws.amazon.com/pricing/) for details. You are responsible for any AWS costs incurred. No warranty is implied in this example.
@@ -18,9 +18,21 @@ Important: this application uses various AWS services and there are costs associ
 
 ## Run the AWS CloudFormation template to create the Amazon MQ (Apache ActiveMQ) Cluster and Client EC2 instance
 
-* [Run the AWS CloudFormation template using the file ActiveMQAndClientEC2.yaml] - You can go to the AWS CloudFormation console, create a new stack by specifying the template file. You can keep the defaults for input parameters or modify them as necessary. Wait for the AWS CloudFormation stack to be created. This AWS CloudFormation template will create an Amazon MQ (Apache ActiveMQ) cluster. It will also create an EC2 instance that you can use as a client.
+* [Run the AWS CloudFormation template using the file ActiveMQAndClientEC2.yaml] - You can create a new AWS CloudFormation stack by using the ActiveMQAndClientEC2.yaml template file from the AWS console or you can use the AWS CLI command below
 
-* [Connect to the EC2 instance] - Once the AWS CloudFormation stack is created, you can go to the EC2 console and log into the instance using either "Connect using EC2 Instance Connect" or "Connect using EC2 Instance Connect Endpoint" option under the "EC2 Instance Connect" tab. In case you are using SSM Instance connect, you are not initially placed in the home directory. If you connect as ssm-user, you need to sudo su to ec2-user for this to work.
+```
+aws cloudformation create-stack \
+    --stack-name my-stack \
+    --template-body file://ActiveMQAndClientEC2.yaml \
+    --capabilities CAPABILITY_IAM \
+    --region <AWS_REGION>
+
+```
+
+* [Connect to the EC2 instance] - Connect to the EC2 instance from the console using "Connect using EC2 Instance Connect" or "Connect using EC2 Instance Connect Endpoint" option under the "EC2 Instance Connect" tab.
+
+Alternatively, use aws ssm start-session --target <EC2 instance ID>
+
 Note: You may need to wait for some time after the CloudFormation stack is created, as some UserData scripts continue running post creation.
 
 ## Pre-requisites to Deploy the sample Lambda function
@@ -33,7 +45,7 @@ The AWS SAM CLI is a serverless tool for building and testing Lambda application
 * pip3 - On the EC2 instance, pip3 is pre-installed
 * AWS SAM CLI - We installed the AWS SAM CLI (https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)
 
-We cloned the serverless-patterns Github repository on the EC2 instance already by running the below command
+We clone the serverless-patterns Github repository on the EC2 instance by running the below command
     ``` 
     git clone https://github.com/aws-samples/serverless-patterns.git
     ```
